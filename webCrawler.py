@@ -4,9 +4,6 @@
 
 import argparse 
 import requests
-import socket
-import re
-import threading
 from time import sleep
 from sys import argv
 from urllib.parse import quote
@@ -30,8 +27,8 @@ def banner():
   \ V  V /  __/ |_) | |____| | | (_| |\ V  V /| |
    \_/\_/ \___|_.__/ \_____|_|  \__,_| \_/\_/ |_|
                                                  
-    author:  {bcolors.HEADER}{author}{bcolors.ENDC}
-    version: {bcolors.HEADER}{version}{bcolors.ENDC}
+    author:  {AsciiColors.HEADER}{author}{AsciiColors.ENDC}
+    version: {AsciiColors.HEADER}{version}{AsciiColors.ENDC}
     """)
     
     
@@ -69,7 +66,7 @@ class ListParser(argparse.Action):
             show_error(f"unable to parse {values} due to incorrect format", "class::ListParser")
  
 
-class bcolors:
+class AsciiColors:
     HEADER  = '\033[95m'
     OKGREEN = '\033[92m'
     WARNING = '\033[93m'
@@ -92,7 +89,7 @@ def parse_arguments():
     parser.add_argument("-D", "--download",    metavar="", default=None, action=ListParser,  help="coma separated extension files to download. ex --> jpg,pdf,png")
     parser.add_argument("-x", "--exclude-url", metavar="", default=None, action=ListParser,  help=f"comma separated domains to exclude. ex --> google.com,youtube.com")
     parser.add_argument("-U", "--user-agent",  metavar="", default="yoMama", help="specify user agent")
-    parser.add_argument("-f", "--follow",    action="store_true", default=False, help="follow redirections")
+    parser.add_argument("-N", "--no-follow",    action="store_false", help="follow redirections")
     parser.add_argument("--rand-user-agent", action="store_true", help="randomize user-agent")
     parser.add_argument("--usage",           action="store_true", help="show usage examples")    
     parser.add_argument("--ignore-errors",   action="store_true", help="ignore connection errors")
@@ -178,9 +175,10 @@ def validate_url(url, supress_error=False):
     try:
         val(url)
     except:
-        if supress_error == False:
+        if not supress_error :
             show_error(f"Error while validating url --> {url}", f"function::{currentframe().f_code.co_name}")
         return False
+    return True
 
 
 def initial_checks(args):
@@ -188,12 +186,14 @@ def initial_checks(args):
     check_target_connectivity(args.url)
     check_proxy_connectivity(args.url, args.proxies)
 
-def check_target_connectivity(url):
+
+def check_target_connectivity(target_url):
     # testing target connection
     try:
-        requests.get(url)
+        requests.get(target_url, allow_redirects=False)
     except requests.exceptions.ConnectionError:
-        show_error(f"Failed to establish a new connection to {url}", f"function::{currentframe().f_code.co_name}")
+        show_error(f"Failed to establish a new connection to {target_url}", f"function::{currentframe().f_code.co_name}")
+
 
 def check_proxy_connectivity(url, pr):
     # testing proxy connection
@@ -205,26 +205,26 @@ def check_proxy_connectivity(url, pr):
 
 
 def show_error(msg, origin):
-    print(f"\n {origin} --> {bcolors.FAIL}error{bcolors.ENDC}")
-    print(f" [X] {bcolors.FAIL}{msg}{bcolors.ENDC}")
+    print(f"\n {origin} --> {AsciiColors.FAIL}error{AsciiColors.ENDC}")
+    print(f" [X] {AsciiColors.FAIL}{msg}{AsciiColors.ENDC}")
     exit(-1)
 
 
 def show_config(args):
-    print(f"[!] %-20s %s"%(f"{bcolors.HEADER}GENERAL{bcolors.ENDC}", "="*40))
+    print(f"[!] %-20s %s"%(f"{AsciiColors.HEADER}GENERAL{AsciiColors.ENDC}", "="*40))
     print("%-20s:%s"%("TARGET",args.url))
     print("%-20s:%s"%("DEPTH",args.depth))
     print("%-20s:%s"%("HEADERS", str(args.headers)))    
     print("%-20s:%s"%("PROXIES", str(args.proxies)))    
     print("%-20s:%s"%("USER-AGENT", str(args.user_agent)))    
     print("%-20s:%s"%("RAND-USER-AGENT",str(args.rand_user_agent)))    
-    print("%-20s:%s"%("FOLLOW REDIRECT",str(args.follow)))    
+    print("%-20s:%s"%("FOLLOW REDIRECT",str(args.no_follow)))    
     print("%-20s:%s"%("IGNORE ERRORS",str(args.ignore_errors)))    
     print()
-    print(f"[!] %-20s %s"%(f"{bcolors.HEADER}PERFORMANCE{bcolors.ENDC}", "="*40))
+    print(f"[!] %-20s %s"%(f"{AsciiColors.HEADER}PERFORMANCE{AsciiColors.ENDC}", "="*40))
     print("%-20s:%s"%("RETRIES",args.retries))    
     print()
-    print(f"[!] %-20s %s"%(f"{bcolors.HEADER}DEBUGGING{bcolors.ENDC}", "="*40))
+    print(f"[!] %-20s %s"%(f"{AsciiColors.HEADER}DEBUGGING{AsciiColors.ENDC}", "="*40))
     print("%-20s:%s"%("VERBOSE",args.verbose))    
     print("%-20s:%s"%("DEBUG",args.debug))    
     print("%-20s:%s"%("OUTPUT",args.output))    
@@ -232,311 +232,45 @@ def show_config(args):
     sleep(2)
 
 
-def verbose(state, msg):
-    if state == True:
-        print("[!] verbose:", msg)    
-
-
-def prog_bar(args):
-    """ Progress bar"""
-
-    # setting global variable bar because it will be called from other threads
-    # every time bar is called, progress var increments is bar in 1 
-    global bar
-    # starting alive_bar
-    with alive_bar(args.request_total, title=f"Progress", enrich_print=False) as bar:
-        while True:
-            # stop thread if run_event has been cleaned
-            if args.run_event.is_set() == False :
-                status = False
-                for thread in threading.enumerate():
-                    # verifying all fuzzing threads are terminated
-                    if ("fuzzing" in thread.name):
-                        status = True
-                        break
-                
-                if (status == False):
-                    break
-
-            sleep(0.1)
-
-
-def request_thread(args):
-    """ 
-    request_thread do the next jobs
-    """
-
-    global bar
-
-    word = " "
-    retry_counter = 0
-
-    # HTTP HEADERS
-    headers = args.headers
-
-    # User-Agent
-    if (args.rand_user_agent == True):
-        # choosing a random user agent if specified
-        headers["User-Agent"] = random_choice(args.UserAgent_wordlist)    
-    else:
-        # default user agent
-        headers.setdefault("User-Agent", args.user_agent)
-
-    # Cookies 
-    cookies = args.cookies
-
-    ## SETTING UP BODY DATA ##
-    if args.http_method == "POST":
-        body_data = args.body_data
-
-    extension_iterator = 0
-    while True:
-        print(word)
-        # iterating to next word only when retry_counter = 0 
-        if retry_counter == 0:
-            if args.extensions != None and extension_iterator == 0:
-                word = args.wordlist.readline()
-                word = quote(word.strip())
-                temp = word
-                extension_iterator += 1
-            elif extension_iterator > 0:
-                word = temp + "." + args.extensions[extension_iterator - 1]
-                extension_iterator = 0 if extension_iterator == len(args.extensions) else extension_iterator + 1
-            else:
-                word = args.wordlist.readline()
-                word = quote(word.strip())
-
-            if args.add_slash == True:
-                word += "/"
-
-
-        # checking if threads should still running
-        if args.run_event.is_set() == False:
-            break
-
-        # checking if thread exceeded total requests
-        if args.request_count >= args.request_total:
-            break
-
-        # check if word already has been sended
-        if word in args.words_requested:
-            continue
-
-        # ignoring empty lines
-        if word == "":
-            bar()
-            args.words_requested.append(word)
-            args.request_count += 1
-            continue
-        
-        # adding word to url
-        new_url = args.url + word
-        payload = new_url
-
-        try:
-            if args.http_method == "GET" or args.http_method == "HEAD":
-                req = requests.request(args.http_method, new_url, timeout=int(args.timeout),
-                                       allow_redirects=args.follow, proxies=args.proxies,
-                                       cookies=cookies, headers=headers)
-            elif args.http_method == "POST":
-                req = requests.post(url=new_url, data=body_data,
-                                       timeout=int(args.timeout), allow_redirects=args.follow, proxies=args.proxies,
-                                       cookies=cookies, headers=headers)
-                
-        except (socket.error, requests.ConnectTimeout):
-            if args.ignore_errors == True:
-                args.request_count += 1
-                bar()
-                continue
-
-            if (retry_counter < args.retries):
-                retry_counter += 1
-                print(f" {bcolors.WARNING}// Retrying connection PAYLOAD[{payload}] retries[{retry_counter}] {bcolors.ENDC}")
-                continue
-
-            args.run_event.clear()   
-            show_error(f"Error stablishing connection  PAYLOAD[{payload}]", "request_thread")
-            
-
-        retry_counter = 0
-
-        # in case server didnt send back content length and server info            
-        req.headers.setdefault("Content-Length", "UNK")
-        req.headers.setdefault("Server",         "UNK")
-
-        
-        # using hide filters
-
-        if (args.hs_filter != None or args.hc_filter != None or args.hw_filter != None or args.hr_filter != None):
-            if response_filter(args.hs_filter, args.hc_filter, args.hw_filter, args.hr_filter, req) == False:
-                output_string =  f"{bcolors.OKGREEN}PAYLOAD{bcolors.ENDC}[{bcolors.HEADER}%-100s{bcolors.ENDC}]"%(payload[:100]) + " "
-                output_string += f"{bcolors.OKGREEN}SC{bcolors.ENDC}[%s]"%(req.status_code) + " "
-                output_string += f"{bcolors.OKGREEN}CL{bcolors.ENDC}[%s]"%(req.headers["Content-Length"]) + " "
-                output_string += f"{bcolors.OKGREEN}SERVER{bcolors.ENDC}[%s]"%(req.headers["Server"]) + " "
-                args.screenlock.acquire()
-                print(output_string)
-                args.screenlock.release()
-
-                # write output to a file (log) if specified
-                if args.output != None:
-                    args.output.write(output_string)
-        else:
-            # if no filters specified, then prints everything 
-            output_string =  f"{bcolors.OKGREEN}PAYLOAD{bcolors.ENDC}[{bcolors.HEADER}%-110s{bcolors.ENDC}]"%(payload[:110]) + " "
-            output_string += f"{bcolors.OKGREEN}SC{bcolors.ENDC}[%s]"%(req.status_code) + " "
-            output_string += f"{bcolors.OKGREEN}CL{bcolors.ENDC}[%s]"%(req.headers["Content-Length"]) + " "
-            output_string += f"{bcolors.OKGREEN}SERVER{bcolors.ENDC}[%s]"%(req.headers["Server"]) + " "
-            args.screenlock.acquire()
-            print(output_string)
-            args.screenlock.release()
-            
-            # write output to a file (log) if specified
-            if args.output != None:
-                args.output.write(output_string)
-
-        bar()
-        args.request_count += 1
-        
-
-        # timewait 
-        sleep(args.timewait)
-        
-
-    return 0    
-
-
-def response_filter(hs_filter, hc_filter, hw_filter, hr_filter, response):
-    filter_status = False
-    # show filters
-    if (hs_filter != None):
-        # show matching status code filter
-        if str(response.status_code) in hs_filter:
-            filter_status = True
-
-    elif (hc_filter != None):
-        # show matching content length filter
-        if response.headers["Content-Length"] != "UNK":
-            if str(response.headers["Content-Length"]) in hc_filter:
-                filter_status = True
-
-    elif (hw_filter != None):
-        # show matching web server name filter 
-        if response.headers["Server"] in hw_filter:
-            filter_status = True
-    
-    elif (hr_filter != None):
-        # show matching pattern filter
-        # searching matching patterns in response headers
-        matching = False
-        for header in response.headers.keys():
-            if re.search(hr_filter, response.headers[header]) != None:
-                matching = True
-                break
-
-        if matching == True:
-            filter_status = True
-        else:
-            # searching matching patterns in response content
-            aux = re.search(hr_filter, response.content.decode("latin-1"))
-            if aux != None:
-                filter_status = True
-
-    return filter_status
-
-
-
-def thread_starter(args):
-    """this functions prepare and execute (start) every thread """
-
-    # initializating global var run_event to stop threads when required
-    args.run_event = threading.Event()
-    args.run_event.set()
-    
-    args.words_requested = []
-    
-    # creating thread lists
-    thread_list = []
-    # thread[0] is a specific thread for progress bar
-    thread_list.append(threading.Thread(target=prog_bar, args=[args]))  
-    for thread in range(0, args.threads):
-        thread_list.append(threading.Thread(target=request_thread, args=[args]))
-
-    # starting threads
-    for i in range(len(thread_list)):
-        thread_list[i].start()
-
-        # giving thread[0] some time to set up progress bar global variables
-        # in order to avoid calls to undefined variables from other threads
-        if i == 0:
-            sleep(0.1)
-
-    exit_msg = ""
-    try:
-        # if a thread clean run_event variable, that means a error has happened
-        # for that reason, all threads must stop and the program itself should stop too
-        while args.run_event.is_set() and threading.active_count() > 3:
-            sleep(0.4)
-        
-        args.run_event.clear()
-        exit_msg = "[!] program finished "
-        exit_code = 0
-        
-    except KeyboardInterrupt:
-        # to stop threads, run_event should be clear()
-        args.run_event.clear()
-        exit_msg = "[!] KeyboardInterrupt: Program finished by user...\n"    
-        exit_msg += "[!] threads successfully closed \n"
-        exit_code = -1
-
-    finally:
-        # finishing threads
-        for i in range(1, len(thread_list)):
-            thread_list[i].join()
-        thread_list[0].join() # first thread of thread_list (prog_bar) should be the last one
-
-    print(exit_msg)    
-    return exit_code
-
-
 def crawler(args, current_target, current_depth):
-
-    html = requests.get(current_target, allow_redirects=args.follow).content
+    html = requests.get(current_target, allow_redirects=args.no_follow).content
+    
     soup = BeautifulSoup(html, 'html.parser')
     
-    elements = soup.find_all(src=True) + soup.find_all(href=True)
 
     # current_urls store all urls found in current_target
     current_urls = list()
+    elements = soup.find_all(src=True) + soup.find_all(href=True)
     for element in elements:
         if 'src' in element.attrs:
-            if validate_url(element['src'], supress_error=True) == False:
-                aux = f"{args.url}{element['src']}"
+            if not validate_url(element['src'], supress_error=True):
+                aux = f"{args.url}{element['src'].lstrip('/')}"
             else:
                 aux = element['src']
-
         if 'href' in element.attrs:
-            if validate_url(element['href'], supress_error=True) == False:
-                aux = f"{args.url}{element['href']}"
+            if not validate_url(element['href'], supress_error=True):
+                aux = f"{args.url}{element['href'].lstrip('/')}"
             else:
                 aux = element['href']
         current_urls.append(aux)
     
     current_urls = list(set(current_urls))
+    
 
     for url in current_urls:
         if (url not in args.indexed_urls) and (current_depth < args.depth):
             # showing new url found and where it was found
-            print(f"[!] %-60s -> %s"%(url, current_target))
+            print(f"[!] %-100s -> %s"%(url[:100], current_target))
             args.indexed_urls.append(url)
-            if (is_media_file(urlparse(url).path) == False) and (urlparse(url).netloc == urlparse(args.url).netloc):
+            if not is_media_file(urlparse(url).path) and (urlparse(url).netloc == urlparse(args.url).netloc):
                 crawler(args, url, current_depth + 1)
-        else:
-            return 0
+    
+    return 0
+
 
 def is_media_file(url_path):
-    
     ext = url_path.split('.')[-1].lower()
-    media_exts = ['svg', 'js', 'mp4', 'mp3', 'avi', 'jpg', 'jpeg', 'png', 'pdf', 'gif', 'webp']
+    media_exts = ['svg', 'js', 'mp4', 'mp3', 'avi', 'jpg', 'jpeg', 'png', 'pdf', 'gif', 'webp', 'xml']
     return True if ext in media_exts else False
 
 
@@ -556,10 +290,8 @@ def main():
         show_config(parsed_arguments)    
 
     crawler(parsed_arguments, parsed_arguments.url, 0)
-    exit(0)
 
     return 0
-    return(thread_starter(parsed_arguments))
 
 
 if __name__ == "__main__":
@@ -570,18 +302,12 @@ if __name__ == "__main__":
 
 
 ##  FUNCIONALIDADES PARA AGREGAR
-#   - Basic Auth 
-#   - Codificadores para los payloads
-#   - Aceptar rangos de valores en los content length y status code
+#   - basic auth
 #   - implementar multiproceso combinado con multihilo
 
 ##  ERRORES O BUGS PARA CORREGIR
-#   - Los filtros no estan funcionando del todo bien
-#   - Algunos hilos realizan la misma solicitud varias veces (creo que es por que leen la misma linea de un archivo al mismo tiempo)
 #   - refactorizar algunas funciones                                                                                                                                                                                                         
-#   - Si no se especifica retries, al primer fallo, o error de conexion, el programa va a terminarse                                                                                                                                          
-#   - al comparar el resultado con otras herramientas como gobuster, webEnum muestra resultados diferentes.                                                                                                                                
 #   - mejorar un poco el output                                                                                                                                                                                                              
 #   - actualizar usage()
 #   - si la ventana reduce su tamano, el formato de salida se va a estropear.
-
+#   - al intentar parsear con bs un xml muestra un error
