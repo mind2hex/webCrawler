@@ -3,21 +3,72 @@
 # description: simple web directory enumeration tool
 
 from bs4 import BeautifulSoup
-from chardet import detect as detect_encoding
 from django.core.validators import URLValidator
 from inspect import currentframe
-from random import choice as random_choice
-from random import randint
 from sys import argv
 from time import sleep
 from urllib.parse import urlparse
-from urllib.parse import quote
 import argparse
 import requests
 from os import mkdir
 
 
-def banner():
+class AsciiColors:
+    HEADER = "\033[95m"
+    OKGREEN = "\033[92m"
+    WARNING = "\033[93m"
+    FAIL = "\033[91m"
+    ENDC = "\033[0m"
+
+
+class DictParser(argparse.Action):
+    """this class is used to convert an argument directly into a dict using the format key=value&key=value"""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, dict())
+        try:
+            for query in values.split("&"):
+                key, val = query.split("=")
+                getattr(namespace, self.dest)[key] = val
+        except:
+            show_error(
+                f"uanble to parse {values} due to incorrect format ",
+                "DictParser",
+            )
+
+
+class ProxyParser(argparse.Action):
+    """this class is used to convert an argument directly into a dict using the format key;value,key=value"""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, dict())
+        try:
+            for query in values.split(","):
+                key, val = query.split(";")
+                getattr(namespace, self.dest)[key] = val
+        except:
+            show_error(
+                f"uanble to parse {values} due to incorrect format ",
+                "ProxyParser",
+            )
+
+
+class ListParser(argparse.Action):
+    """this class is used to convert an argument directly into a comma separated list"""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, list())
+        try:
+            for val in values.split(","):
+                getattr(namespace, self.dest).append(val)
+        except:
+            show_error(
+                f"unable to parse {values} due to incorrect format",
+                "class::ListParser",
+            )
+
+
+def show_banner():
     author = "mind2hex"
     version = "1.0"
     print(
@@ -119,7 +170,7 @@ def parse_arguments():
         metavar="", 
         default=1, 
         type=int, 
-        help=f""
+        help=f"max crawling depth "
     )
 
     # performance args
@@ -136,17 +187,22 @@ def parse_arguments():
     # debugging args
     debug = parser.add_argument_group("debugging options")
     debug.add_argument(
-        "-v", "--verbose", action="store_true", help="show verbose messages"
+        "-v", 
+        "--verbose", 
+        action="store_true", 
+        help="show verbose messages"
     )
     debug.add_argument(
-        "--debug", action="store_true", help="show debugging messages"
+        "--debug", 
+        action="store_true", 
+        help="show debugging messages"
     )
     debug.add_argument(
         "-o",
         "--output",
         metavar="",
         type=argparse.FileType("w"),
-        help="save output to a file",
+        help="save indexed urls to a file",
     )
     debug.add_argument(
         "-q",
@@ -202,24 +258,12 @@ def usage():
     exit(0)
 
 
-def get_file_lines(file):
-    """retorna la cantidad de lineas de un archivo"""
-
-    # detecting encoding
-    with open(file, "rb") as f:
-        codification = detect_encoding(f.read())["encoding"]
-
-    # getting lines
-    with open(file, "r", encoding=codification) as f:
-        total = sum(1 for line in f)
-
-    return total
-
-
 def validate_arguments(args):
     """validate_arguments checks that every argument is valid or in the correct format"""
 
     validate_url(args.url)
+
+    # TODO: add more validations if needed
 
 
 def validate_url(url, supress_error=False):
@@ -275,10 +319,7 @@ def show_error(msg, origin):
 
 
 def show_config(args):
-    print(
-        f"[!] %-20s %s"
-        % (f"{AsciiColors.HEADER}GENERAL{AsciiColors.ENDC}", "=" * 40)
-    )
+    print(f"[!] %-20s %s" % (f"{AsciiColors.HEADER}GENERAL{AsciiColors.ENDC}", "=" * 40))
     print("%-20s:%s" % ("TARGET", args.url))
     print("%-20s:%s" % ("DEPTH", args.depth))
     print("%-20s:%s" % ("HEADERS", str(args.headers)))
@@ -288,67 +329,78 @@ def show_config(args):
     print("%-20s:%s" % ("FOLLOW REDIRECT", str(args.no_follow)))
     print("%-20s:%s" % ("IGNORE ERRORS", str(args.ignore_errors)))
     print("%-20s:%s" % ("DOWNLOAD FILES:", str(args.download)))
-    
-    print()
-    print(
-        f"[!] %-20s %s"
-        % (f"{AsciiColors.HEADER}PERFORMANCE{AsciiColors.ENDC}", "=" * 40)
-    )
+    print(f"\n[!] %-20s %s" % (f"{AsciiColors.HEADER}PERFORMANCE{AsciiColors.ENDC}", "=" * 40))
     print("%-20s:%s" % ("RETRIES", args.retries))
-    print()
-    print(
-        f"[!] %-20s %s"
-        % (f"{AsciiColors.HEADER}DEBUGGING{AsciiColors.ENDC}", "=" * 40)
-    )
+    print(f"\n[!] %-20s %s" % (f"{AsciiColors.HEADER}DEBUGGING{AsciiColors.ENDC}", "=" * 40))
     print("%-20s:%s" % ("VERBOSE", args.verbose))
     print("%-20s:%s" % ("DEBUG", args.debug))
     print("%-20s:%s" % ("OUTPUT", args.output))
-    print()
     sleep(2)
 
 
 def crawler(args, current_target, current_depth):
     """
-    crawler()    
+    crawler()
     """
 
-    if is_media_file(current_target):
-        print(f"[!] Media file: {current_target}")                
-        if args.download is not None:
-            download_file(current_target, args.download)
-        return 0
-        
+    # downloading file if specified by user
+    if args.download is not None:
+        download_file(current_target, args.download)
 
+    # if current_target is media file, then return, because media file has no url's... i guess
+    if is_media_file(current_target):  
+        print(f"[!] {AsciiColors.WARNING} Media file: {AsciiColors.HEADER} {current_target} {AsciiColors.ENDC}")
+        return 
+
+    # making HTTP GET request
     html = requests.get(current_target, allow_redirects=args.no_follow).content
 
-    
+    # parsing HTML content
     soup = BeautifulSoup(html, "html.parser")
 
     # current_urls store all urls found in current_target
     current_urls = list()
+
+    # appending urls found in current_target to current_urls
     elements = soup.find_all(src=True) + soup.find_all(href=True)
     for element in elements:
-        if "src" in element.attrs:
+        if "src" in element.attrs:   # searching new urls in src
             if not validate_url(element["src"], supress_error=True):
                 aux = f"{args.url}{element['src'].lstrip('/')}"
             else:
                 aux = element["src"]
-        if "href" in element.attrs:
+
+        if "href" in element.attrs:  # searching new urls in href
             if not validate_url(element["href"], supress_error=True):
                 aux = f"{args.url}{element['href'].lstrip('/')}"
             else:
                 aux = element["href"]
+
+        # appending urls to current_urls                        
         current_urls.append(aux)
 
+    # deleting repeated url's
     current_urls = list(set(current_urls))
 
+    # saving only non previously indexed_urls
+    new_urls = list()
     for url in current_urls:
-        if (url not in args.indexed_urls) and (current_depth <= args.depth):
+        if (url not in args.indexed_urls) :
+            output = f"[!]{AsciiColors.HEADER} %-100s -> {AsciiColors.OKGREEN} %-100s {AsciiColors.ENDC}" % (url[:100], current_target[:100])
             # showing new url found and where it was found
-            print(f"[!] %-100s -> %s" % (url[:100], current_target))
+            print(output)
+            
+            # saving output to a file if specified by user
+            if args.output is not None:
+                args.output.write(output + "\n")
+
             args.indexed_urls.append(url)
-            if compare_url_netloc(url, args.url):  # only crawl same netloc pages, for now
-                crawler(args, url, current_depth + 1)
+            new_urls.append(url)
+
+    # crawling new urls only
+    for url in new_urls:
+        if compare_url_netloc(url, args.url):  # only crawl pages in the same net location
+            crawler(args, url, current_depth + 1)
 
     return 0
 
@@ -366,20 +418,25 @@ def download_file(url, download_extensions):
         # download file
         ...
     """
+    output_dir = "webCrawler_loot"
+
     try:
-        mkdir("webCrawler_loot")
-    except FileExistsError: 
+        mkdir(output_dir)
+    except FileExistsError:
         pass
     except:
-        show_error("Unable to create output directory...", f"function::{currentframe().f_code.co_name}")
+        show_error(
+            f"Unable to create output directory {output_dir}",
+            f"function::{currentframe().f_code.co_name}",
+        )
         exit(0)
-    
+
     if is_media_file(url, download_extensions):
-        with open(f"webCrawler_loot/{urlparse(url).path.replace('/','_')}", 'wb') as handler:
-            print(f"[!] Downloading: {url}")
+        print(f"[!] {AsciiColors.OKGREEN}Downloading:{AsciiColors.ENDC} {AsciiColors.WARNING}{url}{AsciiColors.ENDC}")
+        with open(f"{output_dir}/{urlparse(url).path.replace('/','_')}", "wb") as handler:
             req = requests.get(url)
             handler.write(req.content)
-        
+
 
 def compare_url_netloc(url_1, url_2):
     return urlparse(url_1).netloc == urlparse(url_2).netloc
@@ -388,7 +445,7 @@ def compare_url_netloc(url_1, url_2):
 def is_media_file(url_path, media_exts=None):
     """
     is_media_file(url_path, media_exts)
-    just compares url_path extension with list media_exts and if it matches, 
+    just compares url_path extension with list media_exts and if it matches,
     then is a media file.
 
     if you give a custom list to media_exts, then this function will check if
@@ -412,12 +469,12 @@ def is_media_file(url_path, media_exts=None):
             "webp",
             "xml",
         ]
-        
+
     return True if ext in media_exts else False
 
 
 def main():
-    banner()
+    show_banner()
 
     if "--usage" in argv:
         usage()
@@ -434,61 +491,6 @@ def main():
     return 0
 
 
-class DictParser(argparse.Action):
-    """this class is used to convert an argument directly into a dict using the format key=value&key=value"""
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        setattr(namespace, self.dest, dict())
-        try:
-            for query in values.split("&"):
-                key, val = query.split("=")
-                getattr(namespace, self.dest)[key] = val
-        except:
-            show_error(
-                f"uanble to parse {values} due to incorrect format ",
-                "DictParser",
-            )
-
-
-class ProxyParser(argparse.Action):
-    """this class is used to convert an argument directly into a dict using the format key;value,key=value"""
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        setattr(namespace, self.dest, dict())
-        try:
-            for query in values.split(","):
-                key, val = query.split(";")
-                getattr(namespace, self.dest)[key] = val
-        except:
-            show_error(
-                f"uanble to parse {values} due to incorrect format ",
-                "ProxyParser",
-            )
-
-
-class ListParser(argparse.Action):
-    """this class is used to convert an argument directly into a comma separated list"""
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        setattr(namespace, self.dest, list())
-        try:
-            for val in values.split(","):
-                getattr(namespace, self.dest).append(val)
-        except:
-            show_error(
-                f"unable to parse {values} due to incorrect format",
-                "class::ListParser",
-            )
-
-
-class AsciiColors:
-    HEADER = "\033[95m"
-    OKGREEN = "\033[92m"
-    WARNING = "\033[93m"
-    FAIL = "\033[91m"
-    ENDC = "\033[0m"
-
-
 if __name__ == "__main__":
     try:
         exit(main())
@@ -502,7 +504,9 @@ if __name__ == "__main__":
 # TODO: multithreading
 # TODO: actualizar usage()
 # TODO: realizar pruebas para buscar posibles errores
-# TODO: agregar mas extensionns posibles de arhivo multimedia a la funcion is_media_file 
+# TODO: agregar mas extensionns posibles de arhivo multimedia a la funcion is_media_file
+# TODO: mejorar el formato de salida para las urls (output file) usar JSON 
+# TODO: implementar filtros para mostrar unicamente lo que quiero ver
 
 ##  CODIGO POR MEJORAR
 # HACK: refactorizar algunas funciones
